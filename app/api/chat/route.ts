@@ -3,6 +3,9 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { experimental_createMCPClient as createMCPClient } from "ai";
 import { Experimental_StdioMCPTransport as StdioMCPTransport } from "ai/mcp-stdio";
 import { z } from "zod";
+import { NextResponse } from "next/server";
+
+export const maxDuration = 60;
 
 const memoryTool = () => {
   return tool({
@@ -85,6 +88,6 @@ export async function POST(req: Request) {
 
     return result.toDataStreamResponse();
   } catch (err) {
-    return err;
+    return NextResponse.json({ error: err }, { status: 500 });
   }
 }
