@@ -29,7 +29,7 @@ export async function POST(req: Request) {
     });
     const mcpClient = await createMCPClient({
       transport: new StdioMCPTransport({
-        command: "bunx",
+        command: "npx",
         args: ["-y", "@modelcontextprotocol/server-postgres", dbUrl],
       }),
     });
