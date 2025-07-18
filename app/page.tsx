@@ -5,22 +5,128 @@ import { useChat } from "@ai-sdk/react";
 import { useConfig } from "@/lib/context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Send, DatabaseIcon, Loader2 } from "lucide-react";
+import { Send, DatabaseIcon, Loader2, AlertCircle, Wand2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
+import { useEffect, useState } from "react";
+
+// Define interfaces
+interface DBError {
+  message: string;
+  toolName?: string;
+}
 
 export default function Chat() {
   const { apiKey, dbUrl, customInstructions } = useConfig();
+  const [dbError, setDbError] = useState<DBError | null>(null);
+  const [fixContext, setFixContext] = useState("");
+  const [isFixing, setIsFixing] = useState(false);
 
-  const { messages, input, handleInputChange, handleSubmit, isLoading, error } =
-    useChat({
+  const {
+    messages,
+    input,
+    handleInputChange,
+    handleSubmit,
+    isLoading,
+    error,
+    reload,
+  } = useChat({
+    body: {
+      apiKey,
+      dbUrl,
+      customInstructions,
+    },
+    onResponse: (response) => {
+      // Check for DB error in headers
+      const dbErrorHeader = response.headers.get("X-DB-Error");
+      if (dbErrorHeader) {
+        try {
+          const parsedError = JSON.parse(dbErrorHeader);
+          setDbError(parsedError);
+        } catch (e) {
+          console.error("Failed to parse DB error", e);
+        }
+      } else {
+        setDbError(null);
+      }
+
+      // Reset fixing state when response comes back
+      setIsFixing(false);
+    },
+  });
+
+  // Function to handle AutoFix
+  const handleAutoFix = () => {
+    if (!dbError) return;
+
+    // Set fixing state
+    setIsFixing(true);
+
+    // Send a request with the fixError parameter
+    reload({
       body: {
         apiKey,
         dbUrl,
         customInstructions,
+        fixError: dbError,
+        fixContext: fixContext,
       },
     });
+
+    // Clear the fix context and error after submitting
+    setFixContext("");
+    setDbError(null);
+  };
+
+  // Handle general errors
+  useEffect(() => {
+    if (error) {
+      console.log("General error:", error);
+    }
+  }, [error]);
+
+  // Check for errors in messages content
+  useEffect(() => {
+    if (messages && messages.length > 0) {
+      const lastMessage = messages[messages.length - 1];
+
+      // Check for error message patterns in the content
+      if (lastMessage.role === "assistant") {
+        // Extract any error from formatted assistant messages
+        let match = null;
+        let content = "";
+
+        // Get content from message text parts
+        for (const part of lastMessage.parts || []) {
+          if (part.type === "text" && typeof part.text === "string") {
+            content += part.text;
+          }
+        }
+
+        // Also check direct content property
+        if (typeof lastMessage.content === "string") {
+          content = lastMessage.content;
+        }
+
+        // Look for error patterns
+        if (content && content.includes("Database Error:")) {
+          match = content.match(/Database Error: (.*?)(?:\n|$)/);
+          if (match && match[1]) {
+            setDbError({ message: match[1] });
+          }
+        }
+
+        // Check if message has special properties indicating an error
+        const messageAny = lastMessage as any;
+        if (messageAny.error === true && messageAny.errorType === "database") {
+          if (messageAny.errorDetails) {
+            setDbError(messageAny.errorDetails);
+          }
+        }
+      }
+    }
+  }, [messages]);
 
   return (
     <div className="flex flex-col h-screen bg-[#1e1e1c] text-white">
@@ -66,7 +172,8 @@ export default function Chat() {
                               remarkPlugins={[remarkGfm]}
                               rehypePlugins={[rehypeRaw]}
                             >
-                              {part.text?.split("The following Python")[0]}
+                              {part.text?.split("The following Python")[0] ||
+                                ""}
                             </ReactMarkdown>
                           </div>
                         );
@@ -77,7 +184,7 @@ export default function Chat() {
                             className="flex self-start cursor-pointer w-fit mb-2 rounded-md items-center bg-slate-500 text-xs gap-2 p-1"
                             onClick={() => {
                               navigator.clipboard.writeText(
-                                part.toolInvocation.args?.sql
+                                part.toolInvocation.args?.sql || ""
                               );
                             }}
                           >
@@ -96,6 +203,46 @@ export default function Chat() {
                 </div>
               </div>
             ))
+          )}
+
+          {/* Database Error Message */}
+          {dbError && (
+            <div className="rounded-lg px-4 py-3 bg-red-900/50 border border-red-700 text-white mr-12 my-2">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="h-5 w-5 text-red-400 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-medium">Database Error</p>
+                  <p className="text-sm text-red-200 mb-3">{dbError.message}</p>
+
+                  {/* Add additional context input field */}
+                  <div className="mb-3">
+                    <p className="text-xs text-red-200 mb-1">
+                      Add any additional context to help fix this error:
+                    </p>
+                    <Input
+                      className="bg-red-950/50 border-red-700 text-white text-sm placeholder:text-red-300/50"
+                      placeholder="e.g., correct column name, enum value..."
+                      value={fixContext}
+                      onChange={(e) => setFixContext(e.target.value)}
+                    />
+                  </div>
+
+                  <Button
+                    onClick={handleAutoFix}
+                    className="bg-orange-600 hover:bg-orange-700 text-white"
+                    size="sm"
+                    disabled={isFixing}
+                  >
+                    {isFixing ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Wand2 className="h-4 w-4 mr-2" />
+                    )}
+                    {isFixing ? "Fixing..." : "AutoFix"}
+                  </Button>
+                </div>
+              </div>
+            </div>
           )}
 
           {isLoading && (
